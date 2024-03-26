@@ -116,9 +116,7 @@ enum ModelFile {
 
 impl StableDiffusionVersion {
     fn repo(&self) -> &'static str {
-        match self {
-            Self::Xl => "cagliostrolab/animagine-xl-3.1",
-        }
+        "cagliostrolab/animagine-xl-3.1"
     }
 
     fn unet_file(&self) -> &'static str {
@@ -338,10 +336,10 @@ fn run(args: Args) -> Result<()> {
 
     let scheduler = sd_config.build_scheduler(n_steps)?;
 
-    let device = if metal_is_available() {
-        Device::new_metal(0)?
-    } else if cpu {
+    let device = if cpu {
         Device::Cpu
+    } else if metal_is_available() {
+        Device::new_metal(0)?
     } else {
         Device::new_cuda(0)?
     };
