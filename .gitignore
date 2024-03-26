@@ -19,5 +19,10 @@ Cargo.lock
 /target
 
 # Don't include large models
-
 models/*
+
+# Don't include model outputs
+output/*
+
+# Tracing
+trace-*.json

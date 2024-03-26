@@ -12,7 +12,6 @@ use candle_nn::Module;
 pub enum Activation {
     QuickGelu,
     Gelu,
-    GeluErf,
 }
 
 impl Module for Activation {
@@ -20,7 +19,6 @@ impl Module for Activation {
         match self {
             Activation::QuickGelu => xs * nn::ops::sigmoid(&(xs * 1.702f64)?)?,
             Activation::Gelu => xs.gelu(),
-            Activation::GeluErf => xs.gelu_erf(),
         }
     }
 }
@@ -41,37 +39,6 @@ pub struct Config {
 }
 
 impl Config {
-    // The config details can be found in the "text_config" section of this json file:
-    // https://huggingface.co/openai/clip-vit-large-patch14/blob/main/config.json
-    pub fn v1_5() -> Self {
-        Self {
-            vocab_size: 49408,
-            embed_dim: 768,
-            intermediate_size: 3072,
-            max_position_embeddings: 77,
-            pad_with: None,
-            num_hidden_layers: 12,
-            num_attention_heads: 12,
-            projection_dim: 768,
-            activation: Activation::QuickGelu,
-        }
-    }
-
-    // https://huggingface.co/stabilityai/stable-diffusion-2-1/blob/main/text_encoder/config.json
-    pub fn v2_1() -> Self {
-        Self {
-            vocab_size: 49408,
-            embed_dim: 1024,
-            intermediate_size: 4096,
-            max_position_embeddings: 77,
-            pad_with: Some("!".to_string()),
-            num_hidden_layers: 23,
-            num_attention_heads: 16,
-            projection_dim: 512,
-            activation: Activation::Gelu,
-        }
-    }
-
     // https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/text_encoder/config.json
     pub fn sdxl() -> Self {
         Self {
@@ -99,44 +66,6 @@ impl Config {
             num_attention_heads: 20,
             projection_dim: 1280,
             activation: Activation::Gelu,
-        }
-    }
-
-    pub fn ssd1b() -> Self {
-        Self::sdxl()
-    }
-
-    pub fn ssd1b2() -> Self {
-        Self::sdxl2()
-    }
-
-    // https://huggingface.co/warp-ai/wuerstchen/blob/main/text_encoder/config.json
-    pub fn wuerstchen() -> Self {
-        Self {
-            vocab_size: 49408,
-            embed_dim: 1024,
-            intermediate_size: 4096,
-            max_position_embeddings: 77,
-            pad_with: None,
-            num_hidden_layers: 24,
-            num_attention_heads: 16,
-            projection_dim: 1024,
-            activation: Activation::GeluErf,
-        }
-    }
-
-    // https://huggingface.co/warp-ai/wuerstchen-prior/blob/main/text_encoder/config.json
-    pub fn wuerstchen_prior() -> Self {
-        Self {
-            vocab_size: 49408,
-            embed_dim: 1280,
-            intermediate_size: 5120,
-            max_position_embeddings: 77,
-            pad_with: None,
-            num_hidden_layers: 32,
-            num_attention_heads: 20,
-            projection_dim: 512,
-            activation: Activation::GeluErf,
         }
     }
 }

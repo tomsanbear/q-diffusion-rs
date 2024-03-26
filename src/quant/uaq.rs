@@ -200,7 +200,7 @@ impl UniformAffineQuantizer {
         };
 
         if self.running_stat {
-            self.act_momentum_update(&x);
+            self.act_momentum_update(&x)?;
         };
 
         let x_int = round_ste(&(x / self.delta.clone().unwrap())?)?;

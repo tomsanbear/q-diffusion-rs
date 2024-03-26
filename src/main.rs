@@ -1,3 +1,6 @@
+#[cfg(feature = "accelerate")]
+extern crate accelerate_src;
+
 mod block;
 mod layer;
 mod quant;
@@ -17,15 +20,19 @@ struct Args {
     /// The prompt to be used for image generation.
     #[arg(
         long,
-        default_value = "A very realistic photo of a rusty robot walking on a sandy beach"
+        default_value = "1girl, souryuu asuka langley, neon genesis evangelion, solo, upper body, v, smile, looking at viewer, outdoors, night"
     )]
     prompt: String,
 
-    #[arg(long, default_value = "")]
-    uncond_prompt: String,
+    /// The negative prompt to be used for image generation.
+    #[arg(
+        long,
+        default_value = "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]"
+    )]
+    negative_prompt: String,
 
     /// Run on CPU rather than on GPU.
-    #[arg(long)]
+    #[arg(long, default_value = "false")]
     cpu: bool,
 
     /// Enable tracing (generates a trace-timestamp.json file).
@@ -33,11 +40,11 @@ struct Args {
     tracing: bool,
 
     /// The height in pixels of the generated image.
-    #[arg(long)]
+    #[arg(long, default_value = "832")]
     height: Option<usize>,
 
     /// The width in pixels of the generated image.
-    #[arg(long)]
+    #[arg(long, default_value = "1216")]
     width: Option<usize>,
 
     /// The UNet weight file, in .safetensors format.
@@ -69,10 +76,10 @@ struct Args {
     num_samples: i64,
 
     /// The name of the final image to generate.
-    #[arg(long, value_name = "FILE", default_value = "sd_final.png")]
+    #[arg(long, value_name = "FILE", default_value = "output/example.png")]
     final_image: String,
 
-    #[arg(long, value_enum, default_value = "v2-1")]
+    #[arg(long, value_enum, default_value = "xl")]
     sd_version: StableDiffusionVersion,
 
     /// Generate intermediary images at each step.
@@ -82,32 +89,19 @@ struct Args {
     #[arg(long)]
     use_flash_attn: bool,
 
-    #[arg(long)]
+    #[arg(long, default_value = "true")]
     use_f16: bool,
 
-    #[arg(long)]
+    #[arg(long, default_value = "7")]
     guidance_scale: Option<f64>,
 
-    #[arg(long, value_name = "FILE")]
-    img2img: Option<String>,
-
-    /// The strength, indicates how much to transform the initial image. The
-    /// value must be between 0 and 1, a value of 1 discards the initial image
-    /// information.
-    #[arg(long, default_value_t = 0.8)]
-    img2img_strength: f64,
-
-    /// The seed to use when generating random samples.
     #[arg(long)]
     seed: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
 enum StableDiffusionVersion {
-    V1_5,
-    V2_1,
     Xl,
-    Turbo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,59 +117,24 @@ enum ModelFile {
 impl StableDiffusionVersion {
     fn repo(&self) -> &'static str {
         match self {
-            Self::Xl => "stabilityai/stable-diffusion-xl-base-1.0",
-            Self::V2_1 => "stabilityai/stable-diffusion-2-1",
-            Self::V1_5 => "runwayml/stable-diffusion-v1-5",
-            Self::Turbo => "stabilityai/sdxl-turbo",
+            Self::Xl => "cagliostrolab/animagine-xl-3.1",
         }
     }
 
-    fn unet_file(&self, use_f16: bool) -> &'static str {
-        match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl | Self::Turbo => {
-                if use_f16 {
-                    "unet/diffusion_pytorch_model.fp16.safetensors"
-                } else {
-                    "unet/diffusion_pytorch_model.safetensors"
-                }
-            }
-        }
+    fn unet_file(&self) -> &'static str {
+        "unet/diffusion_pytorch_model.safetensors"
     }
 
-    fn vae_file(&self, use_f16: bool) -> &'static str {
-        match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl | Self::Turbo => {
-                if use_f16 {
-                    "vae/diffusion_pytorch_model.fp16.safetensors"
-                } else {
-                    "vae/diffusion_pytorch_model.safetensors"
-                }
-            }
-        }
+    fn vae_file(&self) -> &'static str {
+        "vae/diffusion_pytorch_model.safetensors"
     }
 
-    fn clip_file(&self, use_f16: bool) -> &'static str {
-        match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl | Self::Turbo => {
-                if use_f16 {
-                    "text_encoder/model.fp16.safetensors"
-                } else {
-                    "text_encoder/model.safetensors"
-                }
-            }
-        }
+    fn clip_file(&self) -> &'static str {
+        "text_encoder/model.safetensors"
     }
 
-    fn clip2_file(&self, use_f16: bool) -> &'static str {
-        match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl | Self::Turbo => {
-                if use_f16 {
-                    "text_encoder_2/model.fp16.safetensors"
-                } else {
-                    "text_encoder_2/model.safetensors"
-                }
-            }
-        }
+    fn clip2_file(&self) -> &'static str {
+        "text_encoder_2/model.safetensors"
     }
 }
 
@@ -184,7 +143,6 @@ impl ModelFile {
         &self,
         filename: Option<String>,
         version: StableDiffusionVersion,
-        use_f16: bool,
     ) -> Result<std::path::PathBuf> {
         use hf_hub::api::sync::Api;
         match filename {
@@ -193,39 +151,17 @@ impl ModelFile {
                 let (repo, path) = match self {
                     Self::Tokenizer => {
                         let tokenizer_repo = match version {
-                            StableDiffusionVersion::V1_5 | StableDiffusionVersion::V2_1 => {
-                                "openai/clip-vit-base-patch32"
-                            }
-                            StableDiffusionVersion::Xl | StableDiffusionVersion::Turbo => {
-                                // This seems similar to the patch32 version except some very small
-                                // difference in the split regex.
-                                "openai/clip-vit-large-patch14"
-                            }
+                            StableDiffusionVersion::Xl => "openai/clip-vit-large-patch14",
                         };
                         (tokenizer_repo, "tokenizer.json")
                     }
                     Self::Tokenizer2 => {
                         ("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", "tokenizer.json")
                     }
-                    Self::Clip => (version.repo(), version.clip_file(use_f16)),
-                    Self::Clip2 => (version.repo(), version.clip2_file(use_f16)),
-                    Self::Unet => (version.repo(), version.unet_file(use_f16)),
-                    Self::Vae => {
-                        // Override for SDXL when using f16 weights.
-                        // See https://github.com/huggingface/candle/issues/1060
-                        if matches!(
-                            version,
-                            StableDiffusionVersion::Xl | StableDiffusionVersion::Turbo,
-                        ) && use_f16
-                        {
-                            (
-                                "madebyollin/sdxl-vae-fp16-fix",
-                                "diffusion_pytorch_model.safetensors",
-                            )
-                        } else {
-                            (version.repo(), version.vae_file(use_f16))
-                        }
-                    }
+                    Self::Clip => (version.repo(), version.clip_file()),
+                    Self::Clip2 => (version.repo(), version.clip2_file()),
+                    Self::Unet => (version.repo(), version.unet_file()),
+                    Self::Vae => (version.repo(), version.vae_file()),
                 };
                 let filename = Api::new()?.model(repo.to_string()).get(path)?;
                 Ok(filename)
@@ -264,12 +200,11 @@ fn output_filename(
 #[allow(clippy::too_many_arguments)]
 fn text_embeddings(
     prompt: &str,
-    uncond_prompt: &str,
+    negative_prompt: &str,
     tokenizer: Option<String>,
     clip_weights: Option<String>,
     sd_version: StableDiffusionVersion,
     sd_config: &stable_diffusion::StableDiffusionConfig,
-    use_f16: bool,
     device: &Device,
     dtype: DType,
     use_guide_scale: bool,
@@ -280,7 +215,7 @@ fn text_embeddings(
     } else {
         ModelFile::Tokenizer2
     };
-    let tokenizer = tokenizer_file.get(tokenizer, sd_version, use_f16)?;
+    let tokenizer = tokenizer_file.get(tokenizer, sd_version)?;
     let tokenizer = Tokenizer::from_file(tokenizer).map_err(E::msg)?;
     let pad_id = match &sd_config.clip.pad_with {
         Some(padding) => *tokenizer.get_vocab(true).get(padding.as_str()).unwrap(),
@@ -310,7 +245,7 @@ fn text_embeddings(
     } else {
         ModelFile::Clip2
     };
-    let clip_weights = clip_weights_file.get(clip_weights, sd_version, false)?;
+    let clip_weights = clip_weights_file.get(clip_weights, sd_version)?;
     let clip_config = if first {
         &sd_config.clip
     } else {
@@ -322,7 +257,7 @@ fn text_embeddings(
 
     let text_embeddings = if use_guide_scale {
         let mut uncond_tokens = tokenizer
-            .encode(uncond_prompt, true)
+            .encode(negative_prompt, true)
             .map_err(E::msg)?
             .get_ids()
             .to_vec();
@@ -347,33 +282,13 @@ fn text_embeddings(
     Ok(text_embeddings)
 }
 
-fn image_preprocess<T: AsRef<std::path::Path>>(path: T) -> anyhow::Result<Tensor> {
-    let img = image::io::Reader::open(path)?.decode()?;
-    let (height, width) = (img.height() as usize, img.width() as usize);
-    let height = height - height % 32;
-    let width = width - width % 32;
-    let img = img.resize_to_fill(
-        width as u32,
-        height as u32,
-        image::imageops::FilterType::CatmullRom,
-    );
-    let img = img.to_rgb8();
-    let img = img.into_raw();
-    let img = Tensor::from_vec(img, (height, width, 3), &Device::Cpu)?
-        .permute((2, 0, 1))?
-        .to_dtype(DType::F32)?
-        .affine(2. / 255., -1.)?
-        .unsqueeze(0)?;
-    Ok(img)
-}
-
 fn run(args: Args) -> Result<()> {
     use tracing_chrome::ChromeLayerBuilder;
     use tracing_subscriber::prelude::*;
 
     let Args {
         prompt,
-        uncond_prompt,
+        negative_prompt,
         cpu,
         height,
         width,
@@ -390,15 +305,9 @@ fn run(args: Args) -> Result<()> {
         use_f16,
         guidance_scale,
         use_flash_attn,
-        img2img,
-        img2img_strength,
         seed,
         ..
     } = args;
-
-    if !(0. ..=1.).contains(&img2img_strength) {
-        anyhow::bail!("img2img-strength should be between 0 and 1, got {img2img_strength}")
-    }
 
     let _guard = if tracing {
         let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
@@ -411,37 +320,20 @@ fn run(args: Args) -> Result<()> {
     let guidance_scale = match guidance_scale {
         Some(guidance_scale) => guidance_scale,
         None => match sd_version {
-            StableDiffusionVersion::V1_5
-            | StableDiffusionVersion::V2_1
-            | StableDiffusionVersion::Xl => 7.5,
-            StableDiffusionVersion::Turbo => 0.,
+            StableDiffusionVersion::Xl => 7.5,
         },
     };
     let n_steps = match n_steps {
         Some(n_steps) => n_steps,
         None => match sd_version {
-            StableDiffusionVersion::V1_5
-            | StableDiffusionVersion::V2_1
-            | StableDiffusionVersion::Xl => 30,
-            StableDiffusionVersion::Turbo => 1,
+            StableDiffusionVersion::Xl => 30,
         },
     };
     let dtype = if use_f16 { DType::F16 } else { DType::F32 };
     let sd_config = match sd_version {
-        StableDiffusionVersion::V1_5 => {
-            stable_diffusion::StableDiffusionConfig::v1_5(sliced_attention_size, height, width)
-        }
-        StableDiffusionVersion::V2_1 => {
-            stable_diffusion::StableDiffusionConfig::v2_1(sliced_attention_size, height, width)
-        }
         StableDiffusionVersion::Xl => {
             stable_diffusion::StableDiffusionConfig::sdxl(sliced_attention_size, height, width)
         }
-        StableDiffusionVersion::Turbo => stable_diffusion::StableDiffusionConfig::sdxl_turbo(
-            sliced_attention_size,
-            height,
-            width,
-        ),
     };
 
     let scheduler = sd_config.build_scheduler(n_steps)?;
@@ -459,21 +351,17 @@ fn run(args: Args) -> Result<()> {
     }
     let use_guide_scale = guidance_scale > 1.0;
 
-    let which = match sd_version {
-        StableDiffusionVersion::Xl | StableDiffusionVersion::Turbo => vec![true, false],
-        _ => vec![true],
-    };
+    let which = vec![true, false];
     let text_embeddings = which
         .iter()
         .map(|first| {
             text_embeddings(
                 &prompt,
-                &uncond_prompt,
+                &negative_prompt,
                 tokenizer.clone(),
                 clip_weights.clone(),
                 sd_version,
                 &sd_config,
-                use_f16,
                 &device,
                 dtype,
                 use_guide_scale,
@@ -486,55 +374,29 @@ fn run(args: Args) -> Result<()> {
     println!("{text_embeddings:?}");
 
     println!("Building the autoencoder.");
-    let vae_weights = ModelFile::Vae.get(vae_weights, sd_version, use_f16)?;
+    let vae_weights = ModelFile::Vae.get(vae_weights, sd_version)?;
     let vae = sd_config.build_vae(vae_weights, &device, dtype)?;
-    let init_latent_dist = match &img2img {
-        None => None,
-        Some(image) => {
-            let image = image_preprocess(image)?.to_device(&device)?;
-            Some(vae.encode(&image)?)
-        }
-    };
     println!("Building the unet.");
-    let unet_weights = ModelFile::Unet.get(unet_weights, sd_version, use_f16)?;
+    let unet_weights = ModelFile::Unet.get(unet_weights, sd_version)?;
     let unet = sd_config.build_unet(unet_weights, &device, 4, use_flash_attn, dtype)?;
-
-    let t_start = if img2img.is_some() {
-        n_steps - (n_steps as f64 * img2img_strength) as usize
-    } else {
-        0
-    };
+    let t_start = 0;
     let bsize = 1;
 
     let vae_scale = match sd_version {
-        StableDiffusionVersion::V1_5
-        | StableDiffusionVersion::V2_1
-        | StableDiffusionVersion::Xl => 0.18215,
-        StableDiffusionVersion::Turbo => 0.13025,
+        StableDiffusionVersion::Xl => 0.18215,
     };
 
     for idx in 0..num_samples {
         let timesteps = scheduler.timesteps();
-        let latents = match &init_latent_dist {
-            Some(init_latent_dist) => {
-                let latents = (init_latent_dist.sample()? * vae_scale)?.to_device(&device)?;
-                if t_start < timesteps.len() {
-                    let noise = latents.randn_like(0f64, 1f64)?;
-                    scheduler.add_noise(&latents, noise, timesteps[t_start])?
-                } else {
-                    latents
-                }
-            }
-            None => {
-                let latents = Tensor::randn(
-                    0f32,
-                    1f32,
-                    (bsize, 4, sd_config.height / 8, sd_config.width / 8),
-                    &device,
-                )?;
-                // scale the initial noise by the standard deviation required by the scheduler
-                (latents * scheduler.init_noise_sigma())?
-            }
+        let latents = {
+            let latents = Tensor::randn(
+                0f32,
+                1f32,
+                (bsize, 4, sd_config.height / 8, sd_config.width / 8),
+                &device,
+            )?;
+            // scale the initial noise by the standard deviation required by the scheduler
+            (latents * scheduler.init_noise_sigma())?
         };
         let mut latents = latents.to_dtype(dtype)?;
 
