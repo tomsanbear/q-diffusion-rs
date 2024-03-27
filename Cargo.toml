@@ -5,15 +5,15 @@ edition = "2021"
 
 
 [dependencies]
+candle-transformers = { path = "../../huggingface/candle/candle-transformers" }
+candle-datasets = { path = "../../huggingface/candle/candle-datasets" }
+candle-core = { path = "../../huggingface/candle/candle-core" }
 accelerate-src = { version = "0.3.2", optional = true }
 anyhow = "1.0.80"
-candle-core = { git = "https://github.com/tomsanbear/candle", branch = "AddMetalConvDtypes" }
-candle-datasets = { git = "https://github.com/tomsanbear/candle", branch = "AddMetalConvDtypes" }
 candle-einops = "0.1.1"
-candle-flash-attn = { git = "https://github.com/tomsanbear/candle", branch = "AddMetalConvDtypes", optional = true }
-candle-nn = { git = "https://github.com/tomsanbear/candle", branch = "AddMetalConvDtypes" }
-candle-onnx = { git = "https://github.com/tomsanbear/candle", branch = "AddMetalConvDtypes", optional = true }
-candle-transformers = { git = "https://github.com/tomsanbear/candle", branch = "AddMetalConvDtypes" }
+candle-flash-attn = { path = "../../huggingface/candle/candle-flash-attn", optional = true }
+candle-nn = { path = "../../huggingface/candle/candle-nn" }
+candle-onnx = { path = "../../huggingface/candle/candle-onnx", optional = true }
 clap = "4.5.1"
 cudarc = { version = "0.10.0", optional = true }
 half = "2.4.0"

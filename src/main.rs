@@ -399,11 +399,14 @@ fn run(args: Args) -> Result<()> {
         let mut latents = latents.to_dtype(dtype)?;
 
         println!("starting sampling");
-        for (timestep_index, &timestep) in timesteps.iter().enumerate() {
+        for (timestep_index, &timestep) in kdam::tqdm!(
+            timesteps.iter().enumerate(),
+            desc = "timesteps",
+            total = timesteps.len()
+        ) {
             if timestep_index < t_start {
                 continue;
             }
-            let start_time = std::time::Instant::now();
             let latent_model_input = if use_guide_scale {
                 Tensor::cat(&[&latents, &latents], 0)?
             } else {
@@ -422,10 +425,7 @@ fn run(args: Args) -> Result<()> {
             } else {
                 noise_pred
             };
-
             latents = scheduler.step(&noise_pred, timestep, &latents)?;
-            let dt = start_time.elapsed().as_secs_f32();
-            println!("step {}/{n_steps} done, {:.2}s", timestep_index + 1, dt);
 
             if args.intermediary_images {
                 let image = vae.decode(&(&latents / vae_scale)?)?;
@@ -443,7 +443,7 @@ fn run(args: Args) -> Result<()> {
             num_samples
         );
         let image = vae.decode(&(&latents / vae_scale)?)?;
-        let image = ((image / 2.)? + 0.5)?.to_device(&Device::Cpu)?;
+        let image = ((image / 2.)? + 0.5)?;
         let image = (image.clamp(0f32, 1.)? * 255.)?.to_dtype(DType::U8)?.i(0)?;
         let image_filename = output_filename(&final_image, idx + 1, num_samples, None);
         save_image(&image, image_filename)?

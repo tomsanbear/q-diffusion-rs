@@ -2,6 +2,8 @@
 use candle_core::{DType, IndexOp, Result, Tensor, D};
 use candle_nn as nn;
 use candle_nn::Module;
+use candle_transformers::models::with_tracing::{layer_norm, LayerNorm};
+use nn::LayerNormConfig;
 
 #[derive(Debug)]
 struct GeGlu {
@@ -152,9 +154,6 @@ impl CrossAttention {
         let batch_size_attention = query.dim(0)?;
         let mut hidden_states = Vec::with_capacity(batch_size_attention / slice_size);
         let in_dtype = query.dtype();
-        let query = query.to_dtype(DType::F32)?;
-        let key = key.to_dtype(DType::F32)?;
-        let value = value.to_dtype(DType::F32)?;
 
         for i in 0..batch_size_attention / slice_size {
             let start_idx = i * slice_size;
@@ -192,9 +191,6 @@ impl CrossAttention {
                 .to_dtype(init_dtype)?
         } else {
             let in_dtype = query.dtype();
-            let query = query.to_dtype(DType::F32)?;
-            let key = key.to_dtype(DType::F32)?;
-            let value = value.to_dtype(DType::F32)?;
             let xs = query.matmul(&(key.t()? * self.scale)?)?;
             let xs = {
                 let _enter = self.span_softmax.enter();
@@ -236,9 +232,9 @@ struct BasicTransformerBlock {
     attn1: CrossAttention,
     ff: FeedForward,
     attn2: CrossAttention,
-    norm1: nn::LayerNorm,
-    norm2: nn::LayerNorm,
-    norm3: nn::LayerNorm,
+    norm1: LayerNorm,
+    norm2: LayerNorm,
+    norm3: LayerNorm,
     span: tracing::Span,
 }
 
@@ -271,9 +267,14 @@ impl BasicTransformerBlock {
             sliced_attention_size,
             use_flash_attn,
         )?;
-        let norm1 = nn::layer_norm(dim, 1e-5, vs.pp("norm1"))?;
-        let norm2 = nn::layer_norm(dim, 1e-5, vs.pp("norm2"))?;
-        let norm3 = nn::layer_norm(dim, 1e-5, vs.pp("norm3"))?;
+        let layer_norm_config = LayerNormConfig {
+            affine: true,
+            remove_mean: false,
+            eps: 1e-5,
+        };
+        let norm1 = layer_norm(dim, layer_norm_config, vs.pp("norm1"))?;
+        let norm2 = layer_norm(dim, layer_norm_config, vs.pp("norm2"))?;
+        let norm3 = layer_norm(dim, layer_norm_config, vs.pp("norm3"))?;
         let span = tracing::span!(tracing::Level::TRACE, "basic-transformer");
         Ok(Self {
             attn1,
@@ -519,13 +520,9 @@ impl Module for AttentionBlock {
         let key_proj = self.key.forward(&xs)?;
         let value_proj = self.value.forward(&xs)?;
 
-        let query_states = self
-            .transpose_for_scores(query_proj)?
-            .to_dtype(DType::F32)?;
-        let key_states = self.transpose_for_scores(key_proj)?.to_dtype(DType::F32)?;
-        let value_states = self
-            .transpose_for_scores(value_proj)?
-            .to_dtype(DType::F32)?;
+        let query_states = self.transpose_for_scores(query_proj)?;
+        let key_states = self.transpose_for_scores(key_proj)?;
+        let value_states = self.transpose_for_scores(value_proj)?;
 
         // scale is applied twice, hence the -0.25 here rather than -0.5.
         // https://github.com/huggingface/diffusers/blob/d3d22ce5a894becb951eec03e663951b28d45135/src/diffusers/models/attention.py#L87

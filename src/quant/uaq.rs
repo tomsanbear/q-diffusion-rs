@@ -21,6 +21,7 @@ fn lp_loss(pred: Tensor, target: Tensor, p: f64, reduction: Reduction) -> Result
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScaleMethod {
     Max,
+    Mse,
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +95,8 @@ impl UniformAffineQuantizer {
         x: &Tensor,
         channel_wise: bool,
     ) -> Result<(Tensor, Tensor)> {
-        let empty_tensor = Tensor::new(&[0f32], &x.device().clone())?;
+        let device = x.device().clone();
+        let empty_tensor = Tensor::new(&[0f32], &device)?;
         let (mut delta, mut zero_point) = (empty_tensor.clone(), empty_tensor.clone());
         if channel_wise {
             let x_initial = x.clone();
@@ -175,6 +177,30 @@ impl UniformAffineQuantizer {
                 }
 
                 delta = Tensor::new(&[delta_scalar], &x.device().clone())?;
+            } else if self.scale_method == ScaleMethod::Mse {
+                let x_max = x.flatten_all()?.max(0)?;
+                let x_min = x.flatten_all()?.min(0)?;
+                let best_score = 1e10;
+                for i in 0..80 {
+                    let new_max = (x_max.clone() * (1.0 - (i as f64 * 0.01)))?;
+                    let new_min = (x_min.clone() * (1.0 - (i as f64 * 0.01)))?;
+                    let x_q = self.forward(x.clone())?;
+                    let score =
+                        lp_loss(x.clone(), x_q, 2.4, Reduction::All)?.to_vec0::<f32>()? as f64;
+                    if score < best_score {
+                        delta = if !self.always_zero {
+                            ((new_max - new_min.clone())?
+                                / (2usize.pow(self.num_bits as u32) - 1) as f64)?
+                        } else {
+                            (new_max / (2usize.pow(self.num_bits as u32) - 1) as f64)?
+                        };
+                        zero_point = if !self.always_zero {
+                            ((new_min * -1.0f64) / delta.clone())?.round()?
+                        } else {
+                            Tensor::new(&[0.0], &device)?
+                        };
+                    }
+                }
             } else {
                 panic!("Not implemented");
             }
