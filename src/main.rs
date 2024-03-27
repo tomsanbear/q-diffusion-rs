@@ -147,12 +147,7 @@ impl ModelFile {
             Some(filename) => Ok(std::path::PathBuf::from(filename)),
             None => {
                 let (repo, path) = match self {
-                    Self::Tokenizer => {
-                        let tokenizer_repo = match version {
-                            StableDiffusionVersion::Xl => "openai/clip-vit-large-patch14",
-                        };
-                        (tokenizer_repo, "tokenizer.json")
-                    }
+                    Self::Tokenizer => ("openai/clip-vit-large-patch14", "tokenizer.json"),
                     Self::Tokenizer2 => {
                         ("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", "tokenizer.json")
                     }
